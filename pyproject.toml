@@ -1,0 +1,23 @@
+[project]
+name = "huawei-mcp-connector"
+version = "0.1.0"
+description = "MCP server that gives AI assistants read-only access to your Huawei Health data"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=4,<5",
+    "httpx>=0.27",
+    "pydantic>=2",
+    "tzdata",
+]
+
+[project.scripts]
+huawei-mcp = "huawei_mcp.server:main"
+
+[build-system]
+requires = ["uv_build>=0.8.19,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "huawei_mcp"

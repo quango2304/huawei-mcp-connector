@@ -1,0 +1,12 @@
+services:
+  huawei-mcp:
+    build: .
+    image: huawei-mcp-connector
+    container_name: huawei-mcp
+    restart: unless-stopped
+    ports:
+      # 127.0.0.1 = this machine only. On a server set BIND=0.0.0.0 and put HTTPS in front.
+      - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
+    environment:
+      HUAWEI_DEFAULT_REGION: ${HUAWEI_DEFAULT_REGION:-dra}
+      TZ: ${DEFAULT_TZ:-UTC}
