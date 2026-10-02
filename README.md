@@ -104,8 +104,10 @@ you don't re-enter a code after `docker compose up`.
 
 ## Caveats
 
-- **SMS throttling:** requesting many codes in a short time makes Huawei stop sending them for a while.
-  If `start_login` reports an SMS sent but none arrives, wait and try again later.
+- **Rate limiting:** Huawei throttles both SMS codes and login attempts if you make many in a short
+  time. If `start_login` says an SMS was sent but none arrives, or a tool reports *"Huawei is
+  rate-limiting logins"*, wait a while (up to a few hours) and try again. In normal use this never
+  happens — a trusted device refreshes silently without new codes.
 - **Captcha:** Huawei can demand a captcha during login (risk-based; rare on a trusted device). If it
   does, `start_login` returns `captcha_required` and you'll need to log in once in a normal browser.
 - **Region:** detected automatically from your account at login (Asia / Europe / China).
