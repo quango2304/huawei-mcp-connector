@@ -1,91 +1,114 @@
 # Huawei MCP Connector
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI assistants such as Claude read your
-Huawei Health data: workouts, sleep, resting heart rate, HRV, running ability and personal bests.
+A local [MCP](https://modelcontextprotocol.io) server that lets an AI assistant such as Claude read
+your Huawei Health data: workouts, sleep, resting heart rate, HRV, running ability and personal bests.
 
 - **Read-only.** It only queries data. It never writes.
-- **Stateless and multi-user.** Every request carries the caller's own Huawei token in HTTP headers,
-  and the server stores no credentials.
-- **Docker only.** One `docker compose up` command starts it.
+- **Logs in for you.** You give it your Huawei ID account and password once. It signs in, asks you for
+  the one-time SMS code the first time, then **refreshes the token by itself** from then on — no more
+  codes, no hourly copy-paste.
+- **Single user, your machine.** Everything stays local. Runs only via Docker Compose.
+
+## How login works
+
+The server drives the real Huawei login in a headless browser it keeps inside the container:
+
+1. First run: it enters your account + password, Huawei sends an **SMS code**, you give the code to the
+   assistant, and it marks the browser as a **trusted device**.
+2. After that: when the ~1-hour token expires, it logs in again silently with just the account and
+   password (trusted device = no code). You only see a code again if Huawei drops the trust.
+
+The headless browser is used *only* to obtain the token; data requests use plain HTTPS with it.
 
 ## Tools
 
-| Tool | What it returns |
+| Tool | Purpose |
 |---|---|
-| `get_recent_activities` | Recent workouts with distance, heart rate, pace, VO2max and training load |
-| `get_activity_detail` | Raw samples for one workout: heart rate, speed, cadence, GPS, altitude, power |
-| `get_training_summary` | Min / max / avg statistics for each sensor stream of one workout |
-| `get_session_metrics` | Headline metrics for one workout: duration, heart rate, speed, pace, distance |
-| `get_training_period_summary` | Totals for the last N days, also broken down by activity type |
-| `get_training_period_comparison` | The last N days compared with the N days before |
+| `login_status` | Whether a valid session is held |
+| `start_login` | Begin login; sends the SMS (or logs in silently if already trusted) |
+| `submit_sms_code` | Finish the first login with the SMS code; marks the device trusted |
+| `get_recent_activities` | Recent workouts (distance, HR, pace, VO2max, training load) |
+| `get_activity_detail` | Raw samples for one workout (HR, speed, cadence, GPS, altitude, power) |
+| `get_training_summary` | Min/max/avg per sensor stream for one workout |
+| `get_session_metrics` | Headline metrics for one workout (duration, HR, speed, pace, distance) |
+| `get_training_period_summary` | Totals for the last N days, also by activity type |
+| `get_training_period_comparison` | Last N days vs the N before |
 | `get_training_weekly_trend` | Weekly totals for the last N weeks |
 | `get_training_weekly_trend_delta` | Week-over-week changes |
-| `get_sleep_records` | Nightly sleep stages, score, efficiency and wake-ups |
+| `get_sleep_records` | Nightly sleep stages, score, efficiency, wake-ups |
 | `get_resting_heart_rate` | Daily resting heart rate |
 | `get_hrv_stats` | Nightly HRV |
-| `get_athletic_performance` | Running ability, fatigue and predicted race times |
+| `get_athletic_performance` | Running ability, fatigue, predicted race times |
 | `get_personal_bests` | Personal records |
 | `health_check` | Server liveness check |
 
-## Run
+## Setup
+
+### 1. Configure your account
+
+Create a `.env` file next to `docker-compose.yml` (it is git-ignored):
+
+```dotenv
+HUAWEI_ACCOUNT=your_huawei_id_phone_or_email
+HUAWEI_PASSWORD=your_password
+HUAWEI_TZ=Asia/Ho_Chi_Minh   # your timezone, for daily heart-rate/HRV windows
+BIND=127.0.0.1               # this machine only
+```
+
+### 2. Start it
 
 ```bash
 docker compose up -d --build
 ```
 
-The server listens on `http://localhost:8000/mcp`.
+First build pulls the Playwright browser image (~1.8 GB) and takes a few minutes. The server then
+listens on `http://localhost:8000/mcp`.
 
-## Connect Claude Code
-
-1. Sign in at [health.cloud.huawei.com](https://health.cloud.huawei.com) and open DevTools, then the
-   **Network** tab. Reload the page and click any request to `hihealthbase-….things.dbankcloud.com`.
-   Copy its `Authorization` request header, which looks like `Bearer DgEAA…`.
-2. Register the server. The token goes into your personal Claude config, not into this repo:
+### 3. Connect Claude Code
 
 ```bash
-claude mcp add --scope local --transport http huawei http://localhost:8000/mcp -H "Authorization: Bearer <token>" -H "x-timezone: Asia/Ho_Chi_Minh"
+claude mcp add --scope local --transport http huawei http://localhost:8000/mcp
 ```
 
-3. Ask Claude, for example: *"How did I sleep this week?"*
+No token or header needed — the server authenticates itself.
 
-### When the token expires
+### 4. First login
 
-Huawei tokens last about **1 hour**. When tools report `401`, copy a fresh token and run:
+In Claude, ask it to **start login**. Claude calls `start_login`, Huawei texts you a code, you tell
+Claude the code, and Claude calls `submit_sms_code`. Done — from now on it refreshes silently.
 
-```bash
-claude mcp remove huawei --scope local && claude mcp add --scope local --transport http huawei http://localhost:8000/mcp -H "Authorization: Bearer <new token>" -H "x-timezone: Asia/Ho_Chi_Minh"
-```
-
-Then reconnect with `/mcp` in Claude.
-
-## Headers
-
-| Header | Required | Default | Notes |
-|---|---|---|---|
-| `Authorization` | yes | none | `Bearer <token>` from the Huawei Health web app |
-| `x-timezone` | no | container `TZ` (UTC) | IANA name. Sets day boundaries for heart-rate and HRV stats |
-| `x-huawei-region` | no | `dra` | Where your data is stored. Match the host in DevTools: `hihealthbase-<region>…` |
-| `x-client-id` | no | web app id | Only needed if Huawei changes it |
-
-Supported regions: `dra` (Asia-Pacific), `dre` (Europe), `drcn` (China). With the wrong region, every
-call succeeds but returns empty data.
+Then ask things like *"How did I sleep this week?"* or *"What's my 7-day running volume vs last week?"*
 
 ## Configuration
 
-These `docker compose` variables are optional. Set them in your shell or in a local `.env` file,
-which git ignores.
+Set these in `.env`:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `HUAWEI_ACCOUNT` | — (required) | Huawei ID phone or email |
+| `HUAWEI_PASSWORD` | — (required) | Huawei ID password |
+| `HUAWEI_TZ` | `UTC` | IANA timezone for daily resting-HR/HRV windows |
 | `BIND` | `127.0.0.1` | Host interface to publish on |
 | `PORT` | `8000` | Host port |
-| `HUAWEI_DEFAULT_REGION` | `dra` | Region used when `x-huawei-region` is missing |
-| `DEFAULT_TZ` | `UTC` | Timezone used when `x-timezone` is missing |
 
-## Deploying to a server
+The trusted browser profile is kept in a Docker volume (`huawei-profile`), so it survives restarts and
+you don't re-enter a code after `docker compose up`.
 
-Run `BIND=0.0.0.0 docker compose up -d --build` and put HTTPS in front, for example with Caddy or
-nginx. Tokens travel in request headers, so never expose the server over plain HTTP.
+## Security
+
+- Your Huawei **account and password** sit in `.env` on your machine and in the container's environment.
+  They control your whole Huawei ID, so keep `.env` private; it is git-ignored.
+- The trusted-device cookie lives in the `huawei-profile` volume. Treat it like a login session.
+- The server binds to `127.0.0.1` by default. To reach it from elsewhere, deploy to a server with
+  `BIND=0.0.0.0` **behind HTTPS** (e.g. Caddy or nginx) — never expose it over plain HTTP.
+
+## Caveats
+
+- **SMS throttling:** requesting many codes in a short time makes Huawei stop sending them for a while.
+  If `start_login` reports an SMS sent but none arrives, wait and try again later.
+- **Captcha:** Huawei can demand a captcha during login (risk-based; rare on a trusted device). If it
+  does, `start_login` returns `captcha_required` and you'll need to log in once in a normal browser.
+- **Region:** detected automatically from your account at login (Asia / Europe / China).
 
 ## License
 

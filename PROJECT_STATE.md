@@ -4,53 +4,68 @@ _Last updated: 2026-10-02_
 
 ## Status
 
-v0.1.0 works. All 14 tools have been verified over HTTP against a live Huawei account (Asia-Pacific
-region). The workout tools have only been checked on synthetic data, because the test account has no
-workouts yet.
+v0.2.0 — local, single-user connector with self-refreshing login. Works.
+
+Verified: credential login (account + password + one-time SMS + trust-device), fully silent token
+refresh afterwards (re-login with no code), and real data fetch (sleep, resting HR) through the
+refreshed token. Verified on the host; the container runs and reaches the SMS step. The in-container
+*first* SMS login was not completed end-to-end only because Huawei was rate-limiting codes during
+testing — the identical flow succeeds on the host. Workout tools are exercised on synthetic data
+(the test account has no workouts).
 
 ## Architecture
 
 ```
 src/huawei_mcp/
-  server.py    FastMCP tools; reads credentials from request headers; HTTP on :8000/mcp (stateless)
-  queries.py   One function per tool: validates input, calls the client, parses, aggregates
-  client.py    httpx wrapper for the Huawei API; returns raw JSON; region -> host map
-  parsers.py   Raw JSON -> models; never raises on malformed data
-  analysis.py  Pure aggregation: per-workout stats, period totals, comparisons, weekly trends
-  models.py    Pydantic models returned by the tools
+  auth.py      LoginManager: headless Playwright login + trusted profile; hands out a fresh token.
+               All browser work runs in one dedicated thread (Playwright sync API is single-threaded;
+               FastMCP dispatches tools across a pool). Silent refresh = re-login with password only.
+  server.py    FastMCP tools (HTTP on :8000/mcp, stateless). Auth tools + 14 data tools. Each data
+               tool gets a token from LoginManager, builds a client, and retries once on 401.
+  queries.py   One function per tool: validate input, call client, parse, aggregate.
+  client.py    httpx wrapper for the Huawei API; raw JSON; region -> host map.
+  parsers.py   Raw JSON -> models; never raises on malformed data.
+  analysis.py  Pure aggregation: per-workout stats, period totals, comparisons, weekly trends.
+  models.py    Pydantic models returned by the tools.
 ```
 
-- Runs only through `docker compose`, using uv inside the image. There are no tests or scripts.
-- No credentials are stored. Each request sends `Authorization` (required), plus optional
-  `x-huawei-region`, `x-timezone` and `x-client-id` headers.
+- Runs only through `docker compose` (Playwright base image, uv inside). No tests or scripts.
+- Credentials come from the environment (`HUAWEI_ACCOUNT`, `HUAWEI_PASSWORD`), set via `.env`.
+- The trusted browser profile persists in the `huawei-profile` Docker volume.
+
+## Login flow (verified against live Huawei)
+
+- Entry: `health.cloud.huawei.com/TrainingCamp` -> click Login -> Huawei ID page on `id5.cloud.huawei.com`.
+- Fill phone + password -> click **LOG IN** (match the button by exact text; "Log in via SMS" heading
+  also contains "log in").
+- Untrusted browser -> **Verify identity** modal (auto-sends SMS); enter code -> click **OK**.
+- **Trust this browser?** dialog -> click **TRUST** (this is what enables future code-free logins).
+- The SPA exchanges the auth code and stores `accessToken` + `expireTime` in `sessionStorage`
+  (token ~176 chars, ~60-min life). `site` there maps to region: 1=drcn, 5=dra, 7=dre.
+- The access token alone (plus `x-client-id`) authenticates the data API; no browser needed per call.
 
 ## API facts (verified against live responses)
 
 - Base URL: `https://hihealthbase-<region>.things.dbankcloud.{com|cn}/healthrunninggroup/v1`.
-  `dra` and `dre` use `.com`; `drcn` uses `.cn`. A token works in every region, but only the
-  account's home region returns data.
-- The token is a Huawei OAuth access token that expires after about 60 minutes. The client id
-  `106533743` belongs to the web app and is the same for everyone.
-- Timestamp units:
-  - activity list and detail top-level times: ms
-  - detail collectors and samples: ns
-  - sleep records: ns
-  - sleep `go_bed/fall_asleep/wakeup` values: ms
-  - personal best times: ms
-- `periodStatistics` requests need `strategy`, `groupOption="day"` and `timeZone="+HHMM"`,
-  otherwise they return 400. The `healthRecords` stats endpoint takes days as `"YYYYMMDD"`
-  strings; the `sampleSet` endpoint takes them as integers.
-- The detail endpoint cannot look up a workout by id. The server finds the workout in the list
-  first, then queries it by its exact start, end and type.
-- `activeTime` is in ms. Period pace is `sum(active seconds) / sum(km)`, never an average of paces.
+  `dra`/`dre` use `.com`, `drcn` uses `.cn`. A token works in any region but only the home region
+  returns data.
+- Timestamp units: activity list/detail top-level ms; detail collectors/samples ns; sleep records ns;
+  sleep `go_bed/fall_asleep/wakeup` values ms; personal-best times ms.
+- `periodStatistics` needs `strategy`, `groupOption="day"`, `timeZone="+HHMM"` or it 400s.
+  `healthRecords` stats takes days as `"YYYYMMDD"` strings; `sampleSet` takes integers.
+- The detail endpoint can't look up by id; the server finds the workout in the list first.
+- `activeTime` is ms. Period pace = sum(active s) / sum(km), never a mean of paces.
 
-## Known gaps
+## Known gaps / risks
 
-- `x-huawei-region` values `dre` and `drcn` have not been verified with real data.
-- `get_personal_bests` has only been verified for `activity_type="running"`.
-- Tokens can't be refreshed automatically. Users paste a new one about every hour.
+- SMS is rate-limited after several requests in a short window (temporary).
+- Captcha can appear during login (risk-based); unattended login can't solve it. Trusted device
+  makes it rare. Falls back to a manual browser login.
+- Regions `dre` and `drcn` not verified with real data.
+- `get_personal_bests` verified only for `activity_type="running"`.
 
 ## Next
 
+- Complete the in-container first SMS login once throttling clears (one code), confirm silent refresh
+  in the container, then confirm the workout tools once the account has workouts.
 - Deploy to a VPS behind HTTPS.
-- Check workout tools once the account has workouts.

@@ -1,6 +1,6 @@
 [project]
 name = "huawei-mcp-connector"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that gives AI assistants read-only access to your Huawei Health data"
 readme = "README.md"
 license = "MIT"
@@ -9,6 +9,7 @@ dependencies = [
     "fastmcp>=4,<5",
     "httpx>=0.27",
     "pydantic>=2",
+    "playwright>=1.49",
     "tzdata",
 ]
 

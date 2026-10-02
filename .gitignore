@@ -9,3 +9,8 @@ __pycache__/
 .env
 .env.*
 *.secret
+
+# Local Playwright browser profiles / captured data
+data/
+*.har
+profile*/

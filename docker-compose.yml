@@ -8,5 +8,13 @@ services:
       # 127.0.0.1 = this machine only. On a server set BIND=0.0.0.0 and put HTTPS in front.
       - "${BIND:-127.0.0.1}:${PORT:-8000}:8000"
     environment:
-      HUAWEI_DEFAULT_REGION: ${HUAWEI_DEFAULT_REGION:-dra}
-      TZ: ${DEFAULT_TZ:-UTC}
+      # Credentials for the Huawei ID that owns the data (your own account).
+      HUAWEI_ACCOUNT: ${HUAWEI_ACCOUNT:?set HUAWEI_ACCOUNT in .env}
+      HUAWEI_PASSWORD: ${HUAWEI_PASSWORD:?set HUAWEI_PASSWORD in .env}
+      HUAWEI_TZ: ${HUAWEI_TZ:-UTC}
+    volumes:
+      # Trusted browser profile (the device-trust cookie) persists here.
+      - huawei-profile:/data/profile
+
+volumes:
+  huawei-profile:
