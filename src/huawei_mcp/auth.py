@@ -214,15 +214,26 @@ class LoginManager:
         # trusted device -> token directly; untrusted -> verify modal (needs code)
         for _ in range(15):
             page.wait_for_timeout(1500)
+            if self._too_many_attempts(page):
+                raise LoginError("Huawei is rate-limiting logins ('Too many attempts'); wait a while and retry")
             if self._captcha_visible(page):
                 raise CaptchaRequired("Huawei requires a captcha; log in via browser once")
             if self._code_field_visible(page):
+                # The verify modal does NOT auto-send; request the SMS explicitly.
+                self._safe(lambda: self._click_exact(page, "Get code"))
+                page.wait_for_timeout(1500)
+                if self._captcha_visible(page):
+                    raise CaptchaRequired("Huawei requires a captcha; log in via browser once")
                 self._pending_page = page  # parked at verify modal
                 raise CodeRequired("SMS verification required; call start_login/submit_sms_code")
             if tok := self._read_token(page):
                 self._token = tok
                 return tok
         raise LoginError("Silent login did not produce a token")
+
+    def _too_many_attempts(self, page: Page) -> bool:
+        body = self._safe(lambda: page.inner_text("body"), "") or ""
+        return "Too many attempts" in body
 
     def _code_field_visible(self, page: Page) -> bool:
         def check():
